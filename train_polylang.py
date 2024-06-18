@@ -93,6 +93,9 @@ class PolyLang(nn.Module):
             ln_f = nn.LayerNorm(config.n_embd),
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        # weight sharing schema 
+        self.transformer.wte.weight = self.lm_head.weight
+
         if torch.cuda.is_available():
             device = "cuda"
         self.device = device
@@ -185,16 +188,30 @@ train_loader = DataLoader(dataset = train_dataset ,
     shuffle=True)
 
 #example batch 
-x = next(iter(train_loader))
+#batch = next(iter(train_loader))
+#x = batch['bert_input'].to(device)
+#y = batch['bert_labels'].to(device)
 
 #create model 
 print("Building PolyLang..")
 model = PolyLang(PolyLangConfig())
 model.eval()
 model.to(device)
-logits, loss = model(x['bert_input'].to(device),x['bert_labels'].to(device))
-print(logits.shape)
-print(loss.item())
+#logits, loss = model(x['bert_input'].to(device),x['bert_labels'].to(device))
+#print(logits.shape)
+#print(loss.item())
+
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+for i in range(50):
+    batch = next(iter(train_loader))
+    x = batch['bert_input'].to(device)
+    y = batch['bert_labels'].to(device)
+    optimizer.zero_grad()
+    logits, loss = model(x, y)
+    loss.backward()
+    optimizer.step()
+    print(f"step{i}, loss: {loss.item()}")
+
 
 import sys; sys.exit(0)
 
