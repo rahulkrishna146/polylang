@@ -98,7 +98,7 @@ class PolyLang(nn.Module):
         self.device = device
         print("Total Parameters:", sum([p.nelement() for p in self.parameters()]))
 
-    def forward(self, idx, targets):
+    def forward(self, idx, targets=None):
         # idx is the shape (B, T)
         B, T = idx.size()
         assert T <= self.config.block_size, f"Cannot forward sequence of length {T}, block size is only {self.config.block_size}"
@@ -165,8 +165,6 @@ print(f"Tokenizer loaded successfully, vocab_size = {tok.get_vocab_size()}")
 device = "cpu"
 if torch.cuda.is_available():
     device = "cuda"
-elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-    device = "mps"
 print(f"using device: {device}")
 
 # load the text file 
@@ -186,13 +184,19 @@ train_loader = DataLoader(dataset = train_dataset ,
     batch_size = 16, # set what fit on gpu, always a nice number
     shuffle=True)
 
+#example batch 
+x = next(iter(train_loader))
+
 #create model 
 print("Building PolyLang..")
 model = PolyLang(PolyLangConfig())
 model.eval()
 model.to(device)
+logits, loss = model(x['bert_input'].to(device),x['bert_labels'].to(device))
+print(logits.shape)
+print(loss.item())
 
-# traning code
+import sys; sys.exit(0)
 
 # example psmile and embedding generation
 psmile = '*CC(*)c1ccc(C(F)(F)C(F)(F)C(F)(F)C(F)(F)C(F)(F)C(F)(F)C(F)(F)F)cc1'
