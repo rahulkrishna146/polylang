@@ -90,7 +90,9 @@ class PolyLang(nn.Module):
             ln_f = nn.LayerNorm(config.n_embd),
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-
+        if torch.cuda.is_available():
+            device = "cuda"
+        self.device = device
         print("Total Parameters:", sum([p.nelement() for p in self.parameters()]))
 
     def forward(self, idx, targets):
@@ -154,7 +156,7 @@ class PolyLang(nn.Module):
 # tokenizer 
 from tokenizers import Tokenizer
 
-tok = Tokenizer.from_file("tokenizer_models/tokenizer-100m-HF.json")
+tok = Tokenizer.from_file("tokenizer_models/tokenizer-100m-HF-vocab1000.json")
 
 #detect device 
 device = "cpu"
