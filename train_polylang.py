@@ -91,5 +91,27 @@ class PolyLang(nn.Module):
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
+        print("Total Parameters:", sum([p.nelement() for p in self.parameters()]))
+
+    def forward(self, idx, targets):
+        # idx is the shape (B, T)
+        B, T = idx.size()
+        assert T <= self.config.block_size, f"Cannot forward sequence of length {T}, block size is only {self.config.block_size}"
+        # forward the token and posisition embeddings
+        pos = torch.arange(0, T, dtype=torch.long, device=idx.device) # shape (T)
+        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (T, n_embd)
+        tok_emb = self.transformer.wte(idx) # token embeddings of shape (B, T, n_embd)
+        x = tok_emb + pos_emb
+        # forward the blocks of the transformer
+        for block in self.transformer.h:
+            x = block(x)
+        # forward the final layernorm and the classifier
+        x = self.transformer.ln_f(x)
+        logits = self.lm_head(x) # (B, T, vocab_size)
+        loss = None
+        # For BERT calculate the loss on masked tokens 
+        if targets is not None:
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index = 0)
+        return logits, loss
 
     
