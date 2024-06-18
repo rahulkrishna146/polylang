@@ -154,8 +154,7 @@ class PolyLang(nn.Module):
 # tokenizer 
 from tokenizers import Tokenizer
 
-
-
+tok = Tokenizer.from_file("tokenizer_models/tokenizer-100m-HF.json")
 
 #detect device 
 device = "cpu"
@@ -170,3 +169,8 @@ print("Building PolyLang..")
 model = PolyLang(PolyLangConfig())
 model.to(device)
 
+# example psmile and embedding generation
+psmile = '*CC(*)c1ccc(C(F)(F)C(F)(F)C(F)(F)C(F)(F)C(F)(F)C(F)(F)C(F)(F)F)cc1'
+embd = model.get_psmile_embedding(psmile, tokenizer = tok)
+print(f'Embedding dimention : {embd.shape}')
+print(f'The embedding looks like :....  {embd[0][:5]}')
