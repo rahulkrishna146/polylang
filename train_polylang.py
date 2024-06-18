@@ -114,4 +114,19 @@ class PolyLang(nn.Module):
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index = 0)
         return logits, loss
 
-    
+# ------------------------------------------------------
+# generate embeddings
+
+# ------------------------------------------------------
+#detect device 
+device = "cpu"
+if torch.cuda.is_available():
+    device = "cuda"
+elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    device = "mps"
+print(f"using device: {device}")
+
+#create model 
+print("Building PolyLang..")
+model = PolyLang(PolyLangConfig())
+model.to(device)
