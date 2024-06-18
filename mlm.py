@@ -38,7 +38,7 @@ class BERTDataset(Dataset):
         bert_labels = [0 for _ in range(len(encoding))]
         rand = torch.rand(len(encoding))
         #mask arr can be masked with any tokens ---other than 0--> pad ,1---> SOS, 2--> EOS
-        mask_arr = (rand< 0.20)*(torch.tensor([False if (encod == 0 or encod == 1 or encod ==2) else True for encod in encoding]))
+        mask_arr = (rand< 0.15)*(torch.tensor([False if (encod == 0 or encod == 1 or encod ==2) else True for encod in encoding]))
         for i in range(len(mask_arr)):
             if mask_arr[i] == True:
                 input_ids[i] = 3 # masking token = 3
