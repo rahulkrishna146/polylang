@@ -114,10 +114,49 @@ class PolyLang(nn.Module):
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index = 0)
         return logits, loss
 
-# ------------------------------------------------------
-# generate embeddings
+    @torch.no_grad()
+    def generate_embedding(self, encoding):
+        encoding = encoding.view(1, self.config.block_size)
+        token_embedding = self.transformer.wte(encoding)
+        position_embedding = self.transformer.wpe(torch.arange(self.config.block_size).to(self.device))
+
+        x = token_embedding + position_embedding
+        for block in self.transformer.h:
+            x = block(x)
+        x = self.transformer.ln_f(x)
+        emd = x.view(self.config.block_size, self.config.n_embd)
+        return emd
+    
+    def mean_pooling(self,model_out,attention_mask):
+        input_mask_expanded = (attention_mask.unsqueeze(-1).expand(model_out.size()).float())
+        return torch.sum(model_out, 0) / torch.clamp(input_mask_expanded.sum(0), min = 1e-9)
+
+    def get_psmile_embedding(self, text, tokenizer):
+        # add special tokens begging and end 
+        text = "<|SOS|>" + text + "<|EOS|>"
+        out  = tokenizer.encode(text)
+        encoding = out.ids
+        # if the smile length is grater than bloack size truncate
+        if len(encoding) > self.config.block_size:
+            encoding = encoding[:self.config.block_size]
+            attention_mask = [1 for _ in range(len(encoding))]
+        else:
+            padding = [0 for _ in range(self.config.block_size - len(encoding))]
+            attention_mask = [1 for _ in range(len(encoding))]
+            encoding = encoding + padding
+            attention_mask = attention_mask + padding 
+        encod = torch.tensor(encoding).to(self.device)
+        attention_mask = torch.tensor(attention_mask).to(self.device)
+        emb = self.generate_embedding(encod)
+        return F.normalize(self.mean_pooling(emb, attention_mask).view(1, self.config.n_embd))
 
 # ------------------------------------------------------
+# tokenizer 
+from tokenizers import Tokenizer
+
+
+
+
 #detect device 
 device = "cpu"
 if torch.cuda.is_available():
@@ -130,3 +169,4 @@ print(f"using device: {device}")
 print("Building PolyLang..")
 model = PolyLang(PolyLangConfig())
 model.to(device)
+
