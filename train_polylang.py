@@ -169,6 +169,7 @@ print(f"using device: {device}")
 #create model 
 print("Building PolyLang..")
 model = PolyLang(PolyLangConfig())
+model.eval()
 model.to(device)
 
 # example psmile and embedding generation
