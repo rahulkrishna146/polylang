@@ -5,6 +5,9 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from dataclasses import dataclass
+from .mlm import BERTDataset
+from torch.utils.data import DataLoader
+from tokenizers import Tokenizer
 # --------------------------------------
 
 class CausalSelfAttention(nn.Module):
@@ -71,7 +74,7 @@ class Block(nn.Module):
 
 @dataclass 
 class PolyLangConfig:
-    block_size: int = 256 # max sequence length
+    block_size: int = 64 # max sequence length
     vocab_size: int = 1000 # got from running bpe
     n_layer: int = 12 # number of layers
     n_head: int = 8 # number of heads
@@ -154,9 +157,9 @@ class PolyLang(nn.Module):
 
 # ------------------------------------------------------
 # tokenizer 
-from tokenizers import Tokenizer
 
 tok = Tokenizer.from_file("tokenizer_models/tokenizer-100m-HF-vocab1000.json")
+print(f"Tokenizer loaded successfully, vocab_size = {tok.get_vocab_size()}")
 
 #detect device 
 device = "cpu"
@@ -165,6 +168,23 @@ if torch.cuda.is_available():
 elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
     device = "mps"
 print(f"using device: {device}")
+
+# load the text file 
+print(f'Loading textfiles')
+text = open("datasets/7k_psmiles.txt", 'r')
+train_set = text.read().splitlines()
+print(f'Total number of lines in corpus in train: {len(train_set)}')
+
+# initialize dataset 
+print(f"Loading training dataset")
+train_dataset = BERTDataset(data = train_set, 
+    tokenizer = tok, 
+    seq_len = 64) # block_size
+
+# initialize dataloader
+train_loader = DataLoader(dataset = train_dataset , 
+    batch_size = 16, # set what fit on gpu, always a nice number
+    shuffle=True)
 
 #create model 
 print("Building PolyLang..")
