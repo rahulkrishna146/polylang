@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from dataclasses import dataclass
-from .mlm import BERTDataset
+from mlm import BERTDataset
 from torch.utils.data import DataLoader
 from tokenizers import Tokenizer
 # --------------------------------------
@@ -191,6 +191,8 @@ print("Building PolyLang..")
 model = PolyLang(PolyLangConfig())
 model.eval()
 model.to(device)
+
+# traning code
 
 # example psmile and embedding generation
 psmile = '*CC(*)c1ccc(C(F)(F)C(F)(F)C(F)(F)C(F)(F)C(F)(F)C(F)(F)C(F)(F)F)cc1'

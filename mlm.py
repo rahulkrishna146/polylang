@@ -6,7 +6,6 @@ import torch
 from torch.utils.data import Dataset
 import copy
 
-# data ---> text 
 class BERTDataset(Dataset):
     def __init__(self, data, tokenizer, seq_len):
         self.data = data
