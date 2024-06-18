@@ -2,18 +2,9 @@
 Dataset and Dataset Loader creation
 MLM preprocessing and padding 
 """ 
-
 import torch
-from torch.utils.data import Dataset, DataLoader
-import itertools
-import math
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.optim import Adam
-import tqdm
+from torch.utils.data import Dataset
 import copy
-
-#hyper param 
 
 # data ---> text 
 class BERTDataset(Dataset):
