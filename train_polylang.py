@@ -19,6 +19,7 @@ class CausalSelfAttention(nn.Module):
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
         # output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+        self.c_proj.POLYLANG_SCALE_INIT = 1
         # regularization
         self.n_head = config.n_head
         self.n_embd = config.n_embd
@@ -51,6 +52,7 @@ class MLP(nn.Module):
         self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd)
         self.gelu    = nn.GELU()
         self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd)
+        self.c_proj.POLYLANG_SCALE_INIT = 1
 
     def forward(self, x):
         x = self.c_fc(x)
@@ -96,10 +98,24 @@ class PolyLang(nn.Module):
         # weight sharing schema 
         self.transformer.wte.weight = self.lm_head.weight
 
+        #initialize params 
+        self.apply(self._init_weights)
+
         if torch.cuda.is_available():
-            device = "cuda"
+            device = "cuda:2"
         self.device = device
         print("Total Parameters:", sum([p.nelement() for p in self.parameters()]))
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            std = 0.04 #1/sqrt(512)
+            if hasattr(module, 'POLYLANG_SCALE_INIT'):
+                std *= (2*self.config.n_layer) ** -0.5
+            torch.nn.init.normal_(module.weight, mean= 0.0, std = std)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean = 0.0, std = 0.04)
 
     def forward(self, idx, targets=None):
         # idx is the shape (B, T)
@@ -167,7 +183,7 @@ print(f"Tokenizer loaded successfully, vocab_size = {tok.get_vocab_size()}")
 #detect device 
 device = "cpu"
 if torch.cuda.is_available():
-    device = "cuda"
+    device = "cuda:2"
 print(f"using device: {device}")
 
 # load the text file 
@@ -191,6 +207,11 @@ train_loader = DataLoader(dataset = train_dataset ,
 #batch = next(iter(train_loader))
 #x = batch['bert_input'].to(device)
 #y = batch['bert_labels'].to(device)
+
+# induce reproducability
+torch.manual_seed(1337)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(1337)
 
 #create model 
 print("Building PolyLang..")
