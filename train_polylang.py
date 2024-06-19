@@ -195,18 +195,18 @@ print(f'Total number of lines in corpus in train: {len(train_set)}')
 
 # initialize dataset 
 #print(f"Loading training dataset")
-block_size = 64 # set block size here 
+block_size = 32 # set block size here 
 train_dataset = BERTDataset(data = train_set, 
     tokenizer = tok, 
     seq_len = block_size) # block_size
-print(f"Loaded {len(train_set)*block_size}")
+print(f"Loaded {len(train_set)*block_size} tokens")
 
 # initialize dataloader
 batch_size = 128 # set batch size here
 train_loader = DataLoader(dataset = train_dataset , 
     batch_size = batch_size, # set what fit on gpu, always a nice number
     shuffle=True)
-print(f"1 epoch = {math.ceil(len(train_set)/batch_size)} batches")
+print(f"1 epoch = {len(train_set)//batch_size} batches")
 
 #example batch 
 #batch = next(iter(train_loader))
@@ -219,7 +219,6 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
 
 #create model 
-print("Building PolyLang..")
 model = PolyLang(PolyLangConfig(block_size = block_size))
 model.eval()
 model.to(device)
