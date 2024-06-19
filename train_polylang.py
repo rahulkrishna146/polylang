@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from mlm import BERTDataset
 from torch.utils.data import DataLoader
 from tokenizers import Tokenizer
+import time
 # --------------------------------------
 
 class CausalSelfAttention(nn.Module):
@@ -187,21 +188,25 @@ if torch.cuda.is_available():
 print(f"using device: {device}")
 
 # load the text file 
-print(f'Loading textfiles')
+#print(f'Loading textfiles')
 text = open("datasets/7k_psmiles.txt", 'r')
 train_set = text.read().splitlines()
 print(f'Total number of lines in corpus in train: {len(train_set)}')
 
 # initialize dataset 
-print(f"Loading training dataset")
+#print(f"Loading training dataset")
+block_size = 64
 train_dataset = BERTDataset(data = train_set, 
     tokenizer = tok, 
-    seq_len = 64) # block_size
+    seq_len = block_size) # block_size
+print(f"Loaded {len(train_set)*block_size}")
 
 # initialize dataloader
+batch_size = 64
 train_loader = DataLoader(dataset = train_dataset , 
-    batch_size = 16, # set what fit on gpu, always a nice number
+    batch_size = batch_size, # set what fit on gpu, always a nice number
     shuffle=True)
+print(f"1 epoch = {math.ceil(len(train_set)/batch_size)} batches")
 
 #example batch 
 #batch = next(iter(train_loader))
@@ -215,7 +220,7 @@ if torch.cuda.is_available():
 
 #create model 
 print("Building PolyLang..")
-model = PolyLang(PolyLangConfig())
+model = PolyLang(PolyLangConfig(block_size = block_size))
 model.eval()
 model.to(device)
 #logits, loss = model(x['bert_input'].to(device),x['bert_labels'].to(device))
@@ -224,6 +229,7 @@ model.to(device)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
 for i in range(50):
+    t0 = time.time()
     batch = next(iter(train_loader))
     x = batch['bert_input'].to(device)
     y = batch['bert_labels'].to(device)
@@ -231,11 +237,13 @@ for i in range(50):
     logits, loss = model(x, y)
     loss.backward()
     optimizer.step()
-    print(f"step{i}, loss: {loss.item()}")
-
+    torch.cuda.synchronize()
+    t1 = time.time()
+    dt = (t1-t0)*1000 # time diff in milliseconds
+    print(f"step{i}, loss: {loss.item()}, dt: {dt:.2f}ms")
 
 import sys; sys.exit(0)
-
+#import code; code.interact(local=locals())
 # example psmile and embedding generation
 psmile = '*CC(*)c1ccc(C(F)(F)C(F)(F)C(F)(F)C(F)(F)C(F)(F)C(F)(F)C(F)(F)F)cc1'
 embd = model.get_psmile_embedding(psmile, tokenizer = tok)
