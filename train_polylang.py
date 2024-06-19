@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from mlm import BERTDataset
 from torch.utils.data import DataLoader
 from tokenizers import Tokenizer
+import time
 # --------------------------------------
 
 class CausalSelfAttention(nn.Module):
@@ -19,6 +20,7 @@ class CausalSelfAttention(nn.Module):
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
         # output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+        self.c_proj.POLYLANG_SCALE_INIT = 1
         # regularization
         self.n_head = config.n_head
         self.n_embd = config.n_embd
@@ -51,6 +53,7 @@ class MLP(nn.Module):
         self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd)
         self.gelu    = nn.GELU()
         self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd)
+        self.c_proj.POLYLANG_SCALE_INIT = 1
 
     def forward(self, x):
         x = self.c_fc(x)
@@ -96,10 +99,24 @@ class PolyLang(nn.Module):
         # weight sharing schema 
         self.transformer.wte.weight = self.lm_head.weight
 
+        #initialize params 
+        self.apply(self._init_weights)
+
         if torch.cuda.is_available():
-            device = "cuda"
+            device = "cuda:2"
         self.device = device
         print("Total Parameters:", sum([p.nelement() for p in self.parameters()]))
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            std = 0.04 #1/sqrt(512)
+            if hasattr(module, 'POLYLANG_SCALE_INIT'):
+                std *= (2*self.config.n_layer) ** -0.5
+            torch.nn.init.normal_(module.weight, mean= 0.0, std = std)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean = 0.0, std = 0.04)
 
     def forward(self, idx, targets=None):
         # idx is the shape (B, T)
@@ -167,34 +184,43 @@ print(f"Tokenizer loaded successfully, vocab_size = {tok.get_vocab_size()}")
 #detect device 
 device = "cpu"
 if torch.cuda.is_available():
-    device = "cuda"
+    device = "cuda:2"
 print(f"using device: {device}")
 
 # load the text file 
-print(f'Loading textfiles')
-text = open("datasets/7k_psmiles.txt", 'r')
-train_set = text.read().splitlines()
+#print(f'Loading textfiles')
+text = open("datasets/7m_traindata.txt", 'r')
+train_set = [f"<|SOS|>{psmile}<|EOS|>" for psmile in text.read().splitlines()[:100000]]
 print(f'Total number of lines in corpus in train: {len(train_set)}')
 
 # initialize dataset 
-print(f"Loading training dataset")
+#print(f"Loading training dataset")
+block_size = 64 # set block size here 
 train_dataset = BERTDataset(data = train_set, 
     tokenizer = tok, 
-    seq_len = 64) # block_size
+    seq_len = block_size) # block_size
+print(f"Loaded {len(train_set)*block_size}")
 
 # initialize dataloader
+batch_size = 128 # set batch size here
 train_loader = DataLoader(dataset = train_dataset , 
-    batch_size = 16, # set what fit on gpu, always a nice number
+    batch_size = batch_size, # set what fit on gpu, always a nice number
     shuffle=True)
+print(f"1 epoch = {math.ceil(len(train_set)/batch_size)} batches")
 
 #example batch 
 #batch = next(iter(train_loader))
 #x = batch['bert_input'].to(device)
 #y = batch['bert_labels'].to(device)
 
+# induce reproducability
+torch.manual_seed(1337)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(1337)
+
 #create model 
 print("Building PolyLang..")
-model = PolyLang(PolyLangConfig())
+model = PolyLang(PolyLangConfig(block_size = block_size))
 model.eval()
 model.to(device)
 #logits, loss = model(x['bert_input'].to(device),x['bert_labels'].to(device))
@@ -203,6 +229,7 @@ model.to(device)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
 for i in range(50):
+    t0 = time.time()
     batch = next(iter(train_loader))
     x = batch['bert_input'].to(device)
     y = batch['bert_labels'].to(device)
@@ -210,11 +237,14 @@ for i in range(50):
     logits, loss = model(x, y)
     loss.backward()
     optimizer.step()
-    print(f"step{i}, loss: {loss.item()}")
-
+    torch.cuda.synchronize()
+    t1 = time.time()
+    dt = (t1-t0)*1000 # time diff in milliseconds
+    tokens_per_sec = (batch_size*block_size)/(t1-t0)
+    print(f"step{i}, loss: {loss.item()}, dt: {dt:.2f}ms, tok/sec: {tokens_per_sec:.2f}")
 
 import sys; sys.exit(0)
-
+#import code; code.interact(local=locals())
 # example psmile and embedding generation
 psmile = '*CC(*)c1ccc(C(F)(F)C(F)(F)C(F)(F)C(F)(F)C(F)(F)C(F)(F)C(F)(F)F)cc1'
 embd = model.get_psmile_embedding(psmile, tokenizer = tok)
