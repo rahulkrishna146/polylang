@@ -38,9 +38,12 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         
-        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-        att = F.softmax(att, dim= -1)
-        y = att @ v
+        # comment out next three lines and 
+        #att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+        #att = F.softmax(att, dim= -1)
+        #y = att @ v
+        y = F.scaled_dot_product_attention(q,k,v, is_causal= True)
+
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
         # output projection
         y = self.c_proj(y)
@@ -209,7 +212,7 @@ train_loader = DataLoader(dataset = train_dataset ,
 print(f"1 epoch = {len(train_set)//batch_size} batches")
 
 print(f"Maximum context length(block size):{block_size}")
-print(f"Setting a batch size of {batch_size}")
+print(f"Setting a batch size of: {batch_size}")
 
 #example batch 
 #batch = next(iter(train_loader))
@@ -221,10 +224,16 @@ torch.manual_seed(1337)
 if torch.cuda.is_available():
     torch.cuda.manual_seed(1337)
 
+# A100
+torch.set_float32_matmul_precision('high')
+
 #create model 
-model = PolyLang(PolyLangConfig(block_size = block_size))
+model = PolyLang(PolyLangConfig(block_size = block_size, vocab_size=1024))
 model.eval()
-model.to(device)
+model.to(device)#
+# torch.compile only works with python 3.8 to 3.11
+model = torch.compile(model)
+
 #logits, loss = model(x['bert_input'].to(device),x['bert_labels'].to(device))
 #print(logits.shape)
 #print(loss.item())
@@ -236,7 +245,9 @@ for i in range(50):
     x = batch['bert_input'].to(device)
     y = batch['bert_labels'].to(device)
     optimizer.zero_grad()
-    logits, loss = model(x, y)
+    #a100  ampere
+    with torch.autocast(device_type = 'cuda', dtype=torch.bfloat16):
+        logits, loss = model(x, y)
     loss.backward()
     optimizer.step()
     torch.cuda.synchronize()
