@@ -189,33 +189,20 @@ print(f"using device: {device}")
 
 # load the text file 
 #print(f'Loading textfiles')
-<<<<<<< HEAD
 text = open("datasets/7m_traindata.txt", 'r')
 train_set = [f"<|SOS|>{psmile}<|EOS|>" for psmile in text.read().splitlines()[:100000]]
-=======
-text = open("datasets/7k_psmiles.txt", 'r')
-train_set = text.read().splitlines()
->>>>>>> a8ee2c4ff8e8d747fea3c2e4709dfaea71d9091f
 print(f'Total number of lines in corpus in train: {len(train_set)}')
 
 # initialize dataset 
 #print(f"Loading training dataset")
-<<<<<<< HEAD
 block_size = 64 # set block size here 
-=======
-block_size = 64
->>>>>>> a8ee2c4ff8e8d747fea3c2e4709dfaea71d9091f
 train_dataset = BERTDataset(data = train_set, 
     tokenizer = tok, 
     seq_len = block_size) # block_size
 print(f"Loaded {len(train_set)*block_size}")
 
 # initialize dataloader
-<<<<<<< HEAD
 batch_size = 128 # set batch size here
-=======
-batch_size = 64
->>>>>>> a8ee2c4ff8e8d747fea3c2e4709dfaea71d9091f
 train_loader = DataLoader(dataset = train_dataset , 
     batch_size = batch_size, # set what fit on gpu, always a nice number
     shuffle=True)
@@ -253,12 +240,8 @@ for i in range(50):
     torch.cuda.synchronize()
     t1 = time.time()
     dt = (t1-t0)*1000 # time diff in milliseconds
-<<<<<<< HEAD
     tokens_per_sec = (batch_size*block_size)/(t1-t0)
     print(f"step{i}, loss: {loss.item()}, dt: {dt:.2f}ms, tok/sec: {tokens_per_sec:.2f}")
-=======
-    print(f"step{i}, loss: {loss.item()}, dt: {dt:.2f}ms")
->>>>>>> a8ee2c4ff8e8d747fea3c2e4709dfaea71d9091f
 
 import sys; sys.exit(0)
 #import code; code.interact(local=locals())
