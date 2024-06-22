@@ -9,6 +9,7 @@ from mlm import BERTDataset
 from torch.utils.data import DataLoader
 from tokenizers import Tokenizer
 import time
+import inspect
 # --------------------------------------
 
 class CausalSelfAttention(nn.Module):
@@ -142,6 +143,31 @@ class PolyLang(nn.Module):
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index = 0)
         return logits, loss
 
+    def configure_optimizers(self, weight_decay, learning_rate, device_type):
+        # start with all of the candidate parameters (that require grad)
+        param_dict = {pn: p for pn, p in self.named_parameters()}
+        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+        # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
+        # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+        optim_groups = [
+            {'params': decay_params, 'weight_decay': weight_decay},
+            {'params': nodecay_params, 'weight_decay': 0.0}
+        ]
+        num_decay_params = sum(p.numel() for p in decay_params)
+        num_nodecay_params = sum(p.numel() for p in nodecay_params)
+        
+        print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+        print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
+        # Create AdamW optimizer and use the fused version if it is available
+        fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
+        use_fused = fused_available and device_type == "cuda"
+        
+        print(f"using fused AdamW: {use_fused}")
+        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=(0.9, 0.95), eps=1e-8, fused=use_fused)
+        return optimizer
+
     @torch.no_grad()
     def generate_embedding(self, encoding):
         encoding = encoding.view(1, self.config.block_size)
@@ -209,8 +235,8 @@ batch_size = 128 # set batch size here
 train_loader = DataLoader(dataset = train_dataset , 
     batch_size = batch_size, # set what fit on gpu, always a nice number
     shuffle=True)
-print(f"1 epoch = {len(train_set)//batch_size} batches")
 
+print(f"1 epoch = {len(train_set)//batch_size} batches")
 print(f"Maximum context length(block size):{block_size}")
 print(f"Setting a batch size of: {batch_size}")
 
@@ -258,6 +284,7 @@ def get_lr(it):
 
 #opimizer
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4,betas=(0.9, 0.95), eps = 1e-8)
+optimizer= model.configure_optimizers(weight_decay= 0.1,learning_rate=6e-4, device_type='cuda')
 for step in range(max_steps):
     t0 = time.time()
     batch = next(iter(train_loader))
