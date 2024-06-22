@@ -109,7 +109,8 @@ class PolyLang(nn.Module):
         if torch.cuda.is_available():
             device = "cuda:2"
         self.device = device
-        print("Total Parameters:", sum([p.nelement() for p in self.parameters()]))
+        total_params = sum([p.nelement() for p in self.parameters()])
+        print(f"Total Parameters:{total_params}, {(total_params/1e+6):2f}M")
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -219,8 +220,9 @@ print(f"using device: {device}")
 # load the text file 
 #print(f'Loading textfiles')
 text = open("datasets/7m_traindata.txt", 'r')
-train_set = [f"<|SOS|>{psmile}<|EOS|>" for psmile in text.read().splitlines()[:100000]]
+train_set = [f"<|SOS|>{psmile}<|EOS|>" for psmile in text.read().splitlines()[:500000]]
 print(f'Total number of lines in corpus in train: {len(train_set)}')
+print(f"Pretraning on {(len(train_set)/1e+6):2f}M PSMILES")
 
 # initialize dataset 
 #print(f"Loading training dataset")
@@ -230,15 +232,22 @@ train_dataset = BERTDataset(data = train_set,
     seq_len = block_size) # block_size
 print(f"Loaded {len(train_set)*block_size} tokens")
 
+# gradient accumulation
+total_batch_size = 131072 # 2**17 in terms of tokens 
 # initialize dataloader
-batch_size = 128 # set batch size here
+batch_size = 256 # set micro_batch size here,what fits max on gpu 
+assert total_batch_size % (batch_size * block_size) == 0
+grad_accum_steps = total_batch_size // (batch_size*block_size)
+print(f"Total desired batch size: {total_batch_size}")
+print(f"Micro batch size that fot the gpu: {batch_size}")
+print(f"=> calculate gradient accumulation step: {grad_accum_steps}")
+
 train_loader = DataLoader(dataset = train_dataset , 
     batch_size = batch_size, # set what fit on gpu, always a nice number
     shuffle=True)
 
 print(f"1 epoch = {len(train_set)//batch_size} batches")
 print(f"Maximum context length(block size):{block_size}")
-print(f"Setting a batch size of: {batch_size}")
 
 #example batch 
 #batch = next(iter(train_loader))
@@ -285,16 +294,22 @@ def get_lr(it):
 #opimizer
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4,betas=(0.9, 0.95), eps = 1e-8)
 optimizer= model.configure_optimizers(weight_decay= 0.1,learning_rate=6e-4, device_type='cuda')
+
+#iteration loop
 for step in range(max_steps):
     t0 = time.time()
-    batch = next(iter(train_loader))
-    x = batch['bert_input'].to(device)
-    y = batch['bert_labels'].to(device)
     optimizer.zero_grad()
-    #a100  ampere
-    with torch.autocast(device_type = 'cuda', dtype=torch.bfloat16):
-        logits, loss = model(x, y)
-    loss.backward()
+    loss_accum = 0.0
+    for micro_step in range(grad_accum_steps):
+        batch = next(iter(train_loader))
+        x = batch['bert_input'].to(device)
+        y = batch['bert_labels'].to(device)
+        #a100  ampere
+        with torch.autocast(device_type = 'cuda', dtype=torch.bfloat16):
+            logits, loss = model(x, y)
+        loss = loss /grad_accum_steps
+        loss_accum += loss.detach()
+        loss.backward()
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     # determine and set the learing rate for this iteration
     lr = get_lr(step)
@@ -304,8 +319,8 @@ for step in range(max_steps):
     torch.cuda.synchronize()
     t1 = time.time()
     dt = (t1-t0)*1000 # time diff in milliseconds
-    tokens_per_sec = (batch_size*block_size)/(t1-t0)
-    print(f"step{step:4d} | loss: {loss.item():6f} | lr:{lr:4e} | norm: {norm:4f} | dt: {dt:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
+    tokens_per_sec = (batch_size*block_size*grad_accum_steps)/(t1-t0)
+    print(f"step{step:4d} | loss: {loss_accum.item():6f} | lr:{lr:4e} | norm: {norm:4f} | dt: {dt:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
 
 import sys; sys.exit(0)
 #import code; code.interact(local=locals())
