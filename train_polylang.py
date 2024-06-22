@@ -110,7 +110,7 @@ class PolyLang(nn.Module):
             device = "cuda:2"
         self.device = device
         total_params = sum([p.nelement() for p in self.parameters()])
-        print(f"Total Parameters:{total_params}, {(total_params/1e+6):2f}M")
+        #print(f"Total Parameters:{total_params}, {(total_params/1e+6):2f}M")
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -159,13 +159,13 @@ class PolyLang(nn.Module):
         num_decay_params = sum(p.numel() for p in decay_params)
         num_nodecay_params = sum(p.numel() for p in nodecay_params)
         
-        print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
-        print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
+        #print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+        #print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
         # Create AdamW optimizer and use the fused version if it is available
         fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
         use_fused = fused_available and device_type == "cuda"
         
-        print(f"using fused AdamW: {use_fused}")
+        #print(f"using fused AdamW: {use_fused}")
         optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=(0.9, 0.95), eps=1e-8, fused=use_fused)
         return optimizer
 
@@ -206,23 +206,56 @@ class PolyLang(nn.Module):
         return F.normalize(self.mean_pooling(emb, attention_mask).view(1, self.config.n_embd))
 
 # ------------------------------------------------------
+
+
+# ------------------------------------------------------
+# run the training loop
+from torch.distributed import init_process_group, destroy_process_group
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.distributed as dist
+
+
+# set up DDP (distributed data parallel).
+# torchrun command sets the env variables RANK, LOCAL_RANK, and WORLD_SIZE
+ddp = int(os.environ.get('RANK', -1)) != -1 # is this a ddp run?
+if ddp:
+    # use of DDP atm demands CUDA, we set the device appropriately according to rank
+    assert torch.cuda.is_available(), "for now i think we need CUDA for DDP"
+    init_process_group(backend='nccl')
+    ddp_rank = int(os.environ['RANK'])
+    ddp_local_rank = int(os.environ['LOCAL_RANK'])
+    ddp_world_size = int(os.environ['WORLD_SIZE'])
+    device = f'cuda:{ddp_local_rank}'
+    torch.cuda.set_device(device)
+    master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
+else:
+    # vanilla, non-DDP run
+    ddp_rank = 0
+    ddp_local_rank = 0
+    ddp_world_size = 1
+    master_process = True
+    # attempt to autodetect device
+    device = "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = "mps"
+    print(f"using device: {device}")
+
+# device vs. device_type distinction
+device_type = "cuda" if device.startswith("cuda") else "cpu"
+
 # tokenizer 
-
 tok = Tokenizer.from_file("tokenizer_models/tokenizer-100m-HF-vocab1000.json")
-print(f"Tokenizer loaded successfully, vocab_size = {tok.get_vocab_size()}")
-
-#detect device 
-device = "cpu"
-if torch.cuda.is_available():
-    device = "cuda:2"
-print(f"using device: {device}")
-
+if master_process:
+    print(f"Tokenizer loaded successfully, vocab_size = {tok.get_vocab_size()}")
 # load the text file 
 #print(f'Loading textfiles')
 text = open("datasets/7m_traindata.txt", 'r')
 train_set = [f"<|SOS|>{psmile}<|EOS|>" for psmile in text.read().splitlines()[:500000]]
-print(f'Total number of lines in corpus in train: {len(train_set)}')
-print(f"Pretraning on {(len(train_set)/1e+6):2f}M PSMILES")
+if master_process:
+    print(f'Total number of lines in corpus in train: {len(train_set)}')
+    print(f"Pretraning on {(len(train_set)/1e+6):2f}M PSMILES")
 
 # initialize dataset 
 #print(f"Loading training dataset")
@@ -230,24 +263,27 @@ block_size = 64 # set block size here
 train_dataset = BERTDataset(data = train_set, 
     tokenizer = tok, 
     seq_len = block_size) # block_size
-print(f"Loaded {len(train_set)*block_size} tokens")
+if master_process:
+    print(f"Loaded {len(train_set)*block_size} tokens")
 
 # gradient accumulation
-total_batch_size = 131072 # 2**17 in terms of tokens 
+total_batch_size = 2**18 # 2**17 in terms of tokens 
 # initialize dataloader
 batch_size = 256 # set micro_batch size here,what fits max on gpu 
-assert total_batch_size % (batch_size * block_size) == 0
-grad_accum_steps = total_batch_size // (batch_size*block_size)
-print(f"Total desired batch size: {total_batch_size}")
-print(f"Micro batch size that fot the gpu: {batch_size}")
-print(f"=> calculate gradient accumulation step: {grad_accum_steps}")
+assert total_batch_size % (batch_size * block_size * ddp_world_size) == 0
+grad_accum_steps = total_batch_size // (batch_size*block_size*ddp_world_size)
+if master_process:
+    print(f"Total desired batch size: {total_batch_size}")
+    print(f"Micro batch size that fot the gpu: {batch_size}")
+    print(f"=> calculate gradient accumulation step: {grad_accum_steps}")
 
 train_loader = DataLoader(dataset = train_dataset , 
     batch_size = batch_size, # set what fit on gpu, always a nice number
-    shuffle=True)
-
-print(f"1 epoch = {len(train_set)//batch_size} batches")
-print(f"Maximum context length(block size):{block_size}")
+    shuffle=True,
+    num_workers= ddp_world_size)
+if master_process:
+    print(f"1 epoch = {len(train_set)//batch_size} batches")
+    print(f"Maximum context length(block size):{block_size}")
 
 #example batch 
 #batch = next(iter(train_loader))
@@ -262,12 +298,18 @@ if torch.cuda.is_available():
 # A100
 torch.set_float32_matmul_precision('high')
 
+# DDP launch for 4 gpu
+# torchrun --standalone --nproc_per_node=4 train_polylang.py
+
+
 #create model 
 model = PolyLang(PolyLangConfig(block_size = block_size, vocab_size=1024))
-model.eval()
 model.to(device)#
 # torch.compile only works with python 3.8 to 3.11
 model = torch.compile(model)
+if ddp:
+    model =DDP(model, device_ids=[ddp_local_rank])
+raw_model = model.module if ddp else model 
 
 #logits, loss = model(x['bert_input'].to(device),x['bert_labels'].to(device))
 #print(logits.shape)
@@ -293,8 +335,8 @@ def get_lr(it):
 
 #opimizer
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4,betas=(0.9, 0.95), eps = 1e-8)
-optimizer= model.configure_optimizers(weight_decay= 0.1,learning_rate=6e-4, device_type='cuda')
-
+optimizer= raw_model.configure_optimizers(weight_decay= 0.1,learning_rate=6e-4, device_type='cuda')
+  
 #iteration loop
 for step in range(max_steps):
     t0 = time.time()
@@ -309,7 +351,11 @@ for step in range(max_steps):
             logits, loss = model(x, y)
         loss = loss /grad_accum_steps
         loss_accum += loss.detach()
+        if ddp:
+            model.require_backward_grad_sync = (micro_step == grad_accum_steps -1)
         loss.backward()
+    if ddp:
+        dist.all_reduce(loss_accum, op = dist.ReduceOp.AVG)
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     # determine and set the learing rate for this iteration
     lr = get_lr(step)
@@ -319,10 +365,15 @@ for step in range(max_steps):
     torch.cuda.synchronize()
     t1 = time.time()
     dt = (t1-t0)*1000 # time diff in milliseconds
-    tokens_per_sec = (batch_size*block_size*grad_accum_steps)/(t1-t0)
-    print(f"step{step:4d} | loss: {loss_accum.item():6f} | lr:{lr:4e} | norm: {norm:4f} | dt: {dt:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
-
+    tokens_per_sec = (batch_size*block_size*grad_accum_steps*ddp_world_size)/(t1-t0)
+    if master_process:
+        print(f"step{step:4d} | loss: {loss_accum.item():6f} | lr:{lr:4e} | norm: {norm:4f} | dt: {dt:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
+if ddp:
+    destroy_process_group()
 import sys; sys.exit(0)
+
+
+
 #import code; code.interact(local=locals())
 # example psmile and embedding generation
 psmile = '*CC(*)c1ccc(C(F)(F)C(F)(F)C(F)(F)C(F)(F)C(F)(F)C(F)(F)C(F)(F)F)cc1'
